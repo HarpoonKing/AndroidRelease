@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+out/
+dist/
+
+# TypeScript cache
+*.tsbuildinfo
+
+# Python virtual environments
+.venv/
+venv/
+
+# Logs
+*.log
+logs/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+
+# Databases and local data
+*.sqlite
+*.sqlite3
+*.db
+*.db-journal
+
+# OS / Editor
+.DS_Store
+.vscode/
+.idea/
