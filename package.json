@@ -45,6 +45,7 @@
   "build": {
     "appId": "com.autorelease.app",
     "productName": "AndroidRelease",
+    "icon": "build/icon",
     "directories": {
       "output": "dist"
     },

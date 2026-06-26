@@ -51,26 +51,6 @@ interface OppoAppData {
 
 const tokenCache = new Map<string, OppoToken>()
 
-function sanitizeOppoImageUrl(raw: string | undefined, strict = true): string {
-  const value = (raw ?? '').trim()
-  if (!value) return ''
-  // 宽松模式：queryApp 返回的 OPPO CDN 链接直接原样透传
-  if (!strict) {
-    if (/^https?:\/\//i.test(value)) return value
-    return '' // 非 HTTP URL 丢弃
-  }
-  // 严格模式：用户提供的 URL，清洗 query/hash，拦截非法格式
-  try {
-    const u = new URL(value)
-    u.search = ''
-    u.hash = ''
-    if (/\.(webp|gif|bmp|svg)$/i.test(u.pathname)) return ''
-    return u.toString()
-  } catch {
-    return ''
-  }
-}
-
 /** 从 OPPO 响应中提取可读错误信息（消息位置不固定） */
 function parseOppoError(data: unknown): string {
   if (data && typeof data === 'object') {
@@ -160,20 +140,6 @@ export class OppoService implements PlatformService {
         type: 'text',
         required: true,
         placeholder: 'com.example.app'
-      },
-      {
-        key: 'iconUrl',
-        label: '图标 URL (可选，覆盖后台图标)',
-        type: 'text',
-        required: false,
-        placeholder: '512x512 PNG 直链，不填则用 queryApp 返回值'
-      },
-      {
-        key: 'picUrl',
-        label: '截图 URL (可选，覆盖后台截图)',
-        type: 'text',
-        required: false,
-        placeholder: '竖版截图直链，逗号分隔，不填则用 queryApp 返回值'
       }
     ]
   }
@@ -236,20 +202,18 @@ export class OppoService implements PlatformService {
     return { url: uploadRes.data.data.url, md5: uploadRes.data.data.md5 ?? '' }
   }
 
-  /** 上传图片文件到 OPPO CDN，返回正规 URL */
+  /** 下载远程图片并通过 OPPO 上传接口获取合规 URL */
   private async uploadPhoto(
     imageUrl: string,
     token: string,
     clientSecret: string
   ): Promise<string> {
-    // 下载原图
     const dl = await axios.get<ArrayBuffer>(imageUrl, {
       responseType: 'arraybuffer',
       timeout: 30_000
     })
     const buf = Buffer.from(dl.data)
 
-    // 获取上传地址
     const urlRes = await axios.get<{
       errno: number
       data?: { upload_url?: string; sign?: string }
@@ -261,11 +225,10 @@ export class OppoService implements PlatformService {
       throw new PlatformApiError('oppo', urlRes.data?.errno, parseOppoError(urlRes.data))
     }
 
-    // 上传
     const form = new FormData()
     form.append('sign', urlRes.data.data.sign)
     form.append('type', 'photo')
-    form.append('file', buf, { filename: 'icon.png' })
+    form.append('file', buf, { filename: 'image.png' })
 
     const uploadRes = await axios.post<{
       errno: number
@@ -282,6 +245,8 @@ export class OppoService implements PlatformService {
     return uploadRes.data.data.url
   }
 
+
+
   async upload(apkPath: string, meta: UploadMeta, creds: Record<string, string>): Promise<string> {
     const token = await getAccessToken(creds.clientId, creds.clientSecret)
     const pkgName = creds.packageName
@@ -295,43 +260,29 @@ export class OppoService implements PlatformService {
     const apk = await this.uploadApk(apkPath, token, creds.clientSecret)
     const apkUrl = JSON.stringify([{ url: apk.url, md5: apk.md5, cpu_code: 0 }])
 
-    // icon_url: 优先用户提供 → 否则从 queryApp 下载后重新上传到 OPPO CDN
-    const manualIconUrl = sanitizeOppoImageUrl(creds.iconUrl)
-    let safeIconUrl = manualIconUrl
-    if (!safeIconUrl && app.icon_url) {
-      try {
-        console.log('[oppo] re-uploading icon from queryApp URL:', app.icon_url)
-        safeIconUrl = await this.uploadPhoto(app.icon_url, token, creds.clientSecret)
-        console.log('[oppo] re-uploaded icon URL:', safeIconUrl)
-      } catch (e) {
-        console.log('[oppo] icon re-upload failed, trying raw queryApp URL:', (e as Error).message)
-        safeIconUrl = sanitizeOppoImageUrl(app.icon_url, false)
-      }
+    // Step 3: 重传 icon 和截图（queryApp 返回的 CDN URL 不能直接用于 app/upd）
+    let safeIconUrl = ''
+    if (app.icon_url) {
+      console.log('[oppo] re-uploading icon from:', app.icon_url)
+      safeIconUrl = await this.uploadPhoto(app.icon_url, token, creds.clientSecret)
     }
 
-    // pic_url: 优先用户提供 → 否则从 queryApp 下载后逐张重传到 OPPO CDN
-    const manualPicUrl = sanitizeOppoImageUrl(creds.picUrl)
-    let safePicUrl = manualPicUrl
-    if (!safePicUrl && app.pic_url) {
-      try {
-        const rawUrls = app.pic_url.split(',').map((u) => u.trim()).filter(Boolean)
-        console.log('[oppo] re-uploading', rawUrls.length, 'screenshots from queryApp')
-        const newUrls: string[] = []
-        for (const rawUrl of rawUrls) {
-          const url = await this.uploadPhoto(rawUrl, token, creds.clientSecret)
-          newUrls.push(url)
-        }
-        safePicUrl = newUrls.join(',')
-        console.log('[oppo] re-uploaded pic_urls:', safePicUrl)
-      } catch (e) {
-        console.log('[oppo] pic re-upload failed, trying raw queryApp URL:', (e as Error).message)
-        safePicUrl = sanitizeOppoImageUrl(app.pic_url, false)
+    let safePicUrl = ''
+    if (app.pic_url) {
+      const rawUrls = app.pic_url.split(',').map((u) => u.trim()).filter(Boolean)
+      console.log('[oppo] re-uploading', rawUrls.length, 'screenshots')
+      const newUrls: string[] = []
+      for (const rawUrl of rawUrls) {
+        const url = await this.uploadPhoto(rawUrl, token, creds.clientSecret)
+        newUrls.push(url)
       }
+      safePicUrl = newUrls.join(',')
     }
-    console.log('[oppo] final icon_url:', safeIconUrl || '(empty)')
-    console.log('[oppo] final pic_url:', safePicUrl || '(empty)')
+    console.log('[oppo] icon_url:', safeIconUrl)
+    console.log('[oppo] pic_url:', safePicUrl)
 
-    // Step 3: 提交版本（online_type=1 表示审核通过后立即发布）
+
+    // Step 4: 提交版本（online_type=1 表示审核通过后立即发布）
     const values: Record<string, string> = {
       pkg_name: pkgName,
       version_code: String(meta.versionCode),
@@ -339,7 +290,6 @@ export class OppoService implements PlatformService {
       app_name: app.app_name ?? '',
       second_category_id: app.second_category_id ?? '',
       third_category_id: app.third_category_id ?? '',
-      // OPPO 限制 summary（一句话简介）最多 13 个字符，回传旧值时需截断避免被拒
       summary: (app.summary ?? '').slice(0, 13),
       detail_desc: app.detail_desc ?? '',
       update_desc: releaseNotes,
@@ -353,14 +303,9 @@ export class OppoService implements PlatformService {
       age_level: app.age_level ?? '',
       adaptive_equipment: app.adaptive_equipment ?? '',
       adaptive_type: '2',
-      customer_contact: app.customer_contact ?? ''
-    }
-    // 仅在有值时传 icon_url/pic_url，不传则 OPPO 保留后台已有数据
-    if (safeIconUrl) {
-      values.icon_url = safeIconUrl
-    }
-    if (safePicUrl) {
-      values.pic_url = safePicUrl
+      customer_contact: app.customer_contact ?? '',
+      icon_url: safeIconUrl,
+      pic_url: safePicUrl
     }
 
     const res = await axios.post<{ errno: number }>(
