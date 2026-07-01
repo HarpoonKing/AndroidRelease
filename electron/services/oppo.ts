@@ -32,6 +32,8 @@ const UPLOAD_TIMEOUT_MS = 15 * 60_000
 const OPPO_TASK_IN_FLIGHT = 911216 // 版本更新任务处理中
 const OPPO_UNDER_REVIEW = 911215 // 应用审核中（已进入审核队列）
 const OPPO_ICON_SIZE = 512
+const OPPO_SCREENSHOT_WIDTH = 1080 // Android 标准截图宽度
+const OPPO_SCREENSHOT_HEIGHT = 1920 // Android 标准截图高度（9:16 比例）
 const execFileAsync = promisify(execFile)
 
 interface OppoToken {
@@ -382,10 +384,10 @@ export class OppoService implements PlatformService {
 
     let safePicUrl = ''
     if (app.pic_url) {
-      logStage(`[oppo] re-uploading ${screenshotUrls.length} screenshots`)
+      logStage(`[oppo] re-uploading ${screenshotUrls.length} screenshots with ${OPPO_SCREENSHOT_WIDTH}x${OPPO_SCREENSHOT_HEIGHT}`)
       const newUrls: string[] = []
       for (const rawUrl of screenshotUrls) {
-        const url = await this.uploadPhoto(rawUrl, token, creds.clientSecret)
+        const url = await this.uploadPhoto(rawUrl, token, creds.clientSecret, { width: OPPO_SCREENSHOT_WIDTH, height: OPPO_SCREENSHOT_HEIGHT })
         newUrls.push(url)
       }
       safePicUrl = newUrls.join(',')
