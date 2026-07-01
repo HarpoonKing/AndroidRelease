@@ -184,6 +184,13 @@ export class OppoService implements PlatformService {
         type: 'text',
         required: true,
         placeholder: 'com.example.app'
+      },
+      {
+        key: 'iconPath',
+        label: '图标路径（可选）',
+        type: 'text',
+        required: false,
+        placeholder: '本地文件路径或 https:// 图片链接，留空则使用后台图标'
       }
     ]
   }
@@ -244,6 +251,47 @@ export class OppoService implements PlatformService {
       throw new PlatformApiError('oppo', uploadRes.data?.errno, parseOppoError(uploadRes.data))
     }
     return { url: uploadRes.data.data.url, md5: uploadRes.data.data.md5 ?? '' }
+  }
+
+  /** 读取本地图片文件并通过 OPPO 上传接口获取合规 URL */
+  private async uploadLocalPhoto(
+    filePath: string,
+    token: string,
+    clientSecret: string,
+    size?: { width: number; height: number }
+  ): Promise<string> {
+    const rawBuffer = await readFile(filePath)
+    const pngBuffer = await convertImageToPng(rawBuffer, filePath, size)
+
+    const urlRes = await axios.get<{
+      errno: number
+      data?: { upload_url?: string; sign?: string }
+    }>(`${OPPO_DOMAIN}/resource/v1/upload/get-upload-url`, {
+      params: signParams({}, token, clientSecret),
+      timeout: META_TIMEOUT_MS
+    })
+    if (urlRes.data?.errno !== 0 || !urlRes.data.data?.upload_url || !urlRes.data.data.sign) {
+      throw new PlatformApiError('oppo', urlRes.data?.errno, parseOppoError(urlRes.data))
+    }
+
+    const form = new FormData()
+    form.append('sign', urlRes.data.data.sign)
+    form.append('type', 'photo')
+    form.append('file', pngBuffer, { filename: 'icon.png', contentType: 'image/png' })
+
+    const uploadRes = await axios.post<{
+      errno: number
+      data?: { url?: string; md5?: string }
+    }>(urlRes.data.data.upload_url, form, {
+      headers: form.getHeaders(),
+      timeout: UPLOAD_TIMEOUT_MS,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    })
+    if (uploadRes.data?.errno !== 0 || !uploadRes.data.data?.url) {
+      throw new PlatformApiError('oppo', uploadRes.data?.errno, parseOppoError(uploadRes.data))
+    }
+    return uploadRes.data.data.url
   }
 
   /** 下载远程图片并通过 OPPO 上传接口获取合规 URL */
@@ -317,7 +365,14 @@ export class OppoService implements PlatformService {
 
     // Step 3: 重传 icon 和截图（queryApp 返回的 CDN URL 不能直接用于 app/upd）
     let safeIconUrl = ''
-    if (app.icon_url) {
+    if (creds.iconPath?.trim()) {
+      const iconSrc = creds.iconPath.trim()
+      const isRemote = /^https?:\/\//i.test(iconSrc)
+      logStage(`[oppo] uploading icon from ${isRemote ? 'remote url' : 'local path'}: ${iconSrc}`)
+      safeIconUrl = isRemote
+        ? await this.uploadPhoto(iconSrc, token, creds.clientSecret, { width: OPPO_ICON_SIZE, height: OPPO_ICON_SIZE })
+        : await this.uploadLocalPhoto(iconSrc, token, creds.clientSecret, { width: OPPO_ICON_SIZE, height: OPPO_ICON_SIZE })
+    } else if (app.icon_url) {
       logStage(`[oppo] re-uploading icon from: ${app.icon_url} as ${OPPO_ICON_SIZE}x${OPPO_ICON_SIZE} png`)
       safeIconUrl = await this.uploadPhoto(app.icon_url, token, creds.clientSecret, {
         width: OPPO_ICON_SIZE,

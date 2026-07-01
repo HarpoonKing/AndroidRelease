@@ -164,6 +164,16 @@ export class HuaweiService implements PlatformService {
           throw new PlatformApiError('huawei', updateRes.data.ret.code, updateRes.data.ret.msg)
         }
 
+        // Step 3.5: Update release notes (newFeatures) if provided
+        // 缺少版本更新说明会导致提交审核时返回 204144641 "Incomplete application version information"
+        if (meta.releaseNotes?.trim()) {
+          await axios.put<{ ret: { code: number; msg: string } }>(
+            `${base}/app-language-info`,
+            { lang: 'zh-CN', newFeatures: meta.releaseNotes.trim() },
+            { params: { appId: creds.appId }, headers: { ...headers, 'Content-Type': 'application/json' }, timeout: META_TIMEOUT_MS }
+          ).catch((err) => stageError('更新华为版本更新说明', err))
+        }
+
         // Step 4: Submit for review
         // 上传后华为后台需要编译 APK（约 3-5 分钟），编译期间提交会返回 PACKAGE_COMPILING_CODE，需等待后重试
         for (let submitAttempt = 0; ; submitAttempt++) {
