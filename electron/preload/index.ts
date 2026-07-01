@@ -10,6 +10,8 @@ const api = {
     list: (): Promise<App[]> => ipcRenderer.invoke('apps:list'),
     create: (payload: { name: string; bundleId: string; iconPath?: string }): Promise<App> =>
       ipcRenderer.invoke('apps:create', payload),
+    update: (payload: { id: number; name: string; bundleId: string; iconPath?: string | null }): Promise<App> =>
+      ipcRenderer.invoke('apps:update', payload),
     delete: (appId: number): Promise<{ ok: boolean }> => ipcRenderer.invoke('apps:delete', appId)
   },
 

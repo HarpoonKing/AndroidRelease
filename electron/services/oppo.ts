@@ -1,6 +1,12 @@
 import axios from 'axios'
+import { execFile } from 'child_process'
 import FormData from 'form-data'
+import { nativeImage } from 'electron'
 import { createReadStream } from 'fs'
+import { mkdtemp, readFile, rm, writeFile } from 'fs/promises'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { promisify } from 'util'
 import * as crypto from 'crypto'
 import type { PlatformService, CredentialField, UploadMeta, AuditStatus } from './base'
 import { PlatformApiError } from './base'
@@ -25,6 +31,8 @@ const UPLOAD_TIMEOUT_MS = 15 * 60_000
 // 发布时的非失败错误码
 const OPPO_TASK_IN_FLIGHT = 911216 // 版本更新任务处理中
 const OPPO_UNDER_REVIEW = 911215 // 应用审核中（已进入审核队列）
+const OPPO_ICON_SIZE = 512
+const execFileAsync = promisify(execFile)
 
 interface OppoToken {
   access_token: string
@@ -112,6 +120,42 @@ function signParams(
     .join('&')
   signed.api_sign = crypto.createHmac('sha256', clientSecret).update(signStr).digest('hex')
   return signed
+}
+
+async function convertImageToPng(
+  imageBuffer: Buffer,
+  imageUrl: string,
+  size?: { width: number; height: number }
+): Promise<Buffer> {
+  const image = nativeImage.createFromBuffer(imageBuffer)
+  if (!image.isEmpty()) {
+    const normalizedImage = size ? image.resize({ width: size.width, height: size.height, quality: 'best' }) : image
+    return normalizedImage.toPNG()
+  }
+
+  const tempDir = await mkdtemp(join(tmpdir(), 'oppo-image-'))
+  const inputPath = join(tempDir, 'source.webp')
+  const outputPath = join(tempDir, 'converted.png')
+
+  try {
+    await writeFile(inputPath, imageBuffer)
+    const sipsArgs = ['-s', 'format', 'png']
+    if (size) {
+      sipsArgs.push('-z', String(size.height), String(size.width))
+    }
+    sipsArgs.push(inputPath, '--out', outputPath)
+    await execFileAsync('sips', sipsArgs)
+    return await readFile(outputPath)
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error)
+    throw new PlatformApiError(
+      'oppo',
+      'invalid_image',
+      `Failed to convert image to png: ${imageUrl}; ${reason}`
+    )
+  } finally {
+    await rm(tempDir, { recursive: true, force: true })
+  }
 }
 
 export class OppoService implements PlatformService {
@@ -206,13 +250,15 @@ export class OppoService implements PlatformService {
   private async uploadPhoto(
     imageUrl: string,
     token: string,
-    clientSecret: string
+    clientSecret: string,
+    size?: { width: number; height: number }
   ): Promise<string> {
     const dl = await axios.get<ArrayBuffer>(imageUrl, {
       responseType: 'arraybuffer',
       timeout: 30_000
     })
-    const buf = Buffer.from(dl.data)
+    const rawBuffer = Buffer.from(dl.data)
+    const pngBuffer = await convertImageToPng(rawBuffer, imageUrl, size)
 
     const urlRes = await axios.get<{
       errno: number
@@ -228,7 +274,7 @@ export class OppoService implements PlatformService {
     const form = new FormData()
     form.append('sign', urlRes.data.data.sign)
     form.append('type', 'photo')
-    form.append('file', buf, { filename: 'image.png' })
+    form.append('file', pngBuffer, { filename: 'image.png', contentType: 'image/png' })
 
     const uploadRes = await axios.post<{
       errno: number
@@ -252,9 +298,18 @@ export class OppoService implements PlatformService {
     const pkgName = creds.packageName
     const releaseNotes = (meta.releaseNotes ?? '').trim()
     const safeTestDesc = releaseNotes || '常规功能验证通过'
+    const logStage = (message: string): void => {
+      meta.log?.(message)
+    }
 
     // Step 1: 查询应用已有元数据
     const app = await this.queryApp(pkgName, token, creds.clientSecret)
+    const screenshotUrls = (app.pic_url ?? '')
+      .split(',')
+      .map((url) => url.trim())
+      .filter(Boolean)
+    logStage(`[oppo] source icon_url: ${app.icon_url ?? ''}`)
+    logStage(`[oppo] source screenshot_urls: ${JSON.stringify(screenshotUrls)}`)
 
     // Step 2: 上传 APK
     const apk = await this.uploadApk(apkPath, token, creds.clientSecret)
@@ -263,23 +318,25 @@ export class OppoService implements PlatformService {
     // Step 3: 重传 icon 和截图（queryApp 返回的 CDN URL 不能直接用于 app/upd）
     let safeIconUrl = ''
     if (app.icon_url) {
-      console.log('[oppo] re-uploading icon from:', app.icon_url)
-      safeIconUrl = await this.uploadPhoto(app.icon_url, token, creds.clientSecret)
+      logStage(`[oppo] re-uploading icon from: ${app.icon_url} as ${OPPO_ICON_SIZE}x${OPPO_ICON_SIZE} png`)
+      safeIconUrl = await this.uploadPhoto(app.icon_url, token, creds.clientSecret, {
+        width: OPPO_ICON_SIZE,
+        height: OPPO_ICON_SIZE
+      })
     }
 
     let safePicUrl = ''
     if (app.pic_url) {
-      const rawUrls = app.pic_url.split(',').map((u) => u.trim()).filter(Boolean)
-      console.log('[oppo] re-uploading', rawUrls.length, 'screenshots')
+      logStage(`[oppo] re-uploading ${screenshotUrls.length} screenshots`)
       const newUrls: string[] = []
-      for (const rawUrl of rawUrls) {
+      for (const rawUrl of screenshotUrls) {
         const url = await this.uploadPhoto(rawUrl, token, creds.clientSecret)
         newUrls.push(url)
       }
       safePicUrl = newUrls.join(',')
     }
-    console.log('[oppo] icon_url:', safeIconUrl)
-    console.log('[oppo] pic_url:', safePicUrl)
+    logStage(`[oppo] icon_url: ${safeIconUrl}`)
+    logStage(`[oppo] pic_url: ${safePicUrl}`)
 
 
     // Step 4: 提交版本（online_type=1 表示审核通过后立即发布）

@@ -4,6 +4,7 @@ export interface UploadMeta {
   versionName: string
   versionCode: number
   releaseNotes?: string
+  log?: (message: string) => void
 }
 
 export interface CredentialField {

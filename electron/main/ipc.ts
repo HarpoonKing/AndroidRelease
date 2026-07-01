@@ -1,4 +1,4 @@
-import { ipcMain, safeStorage, dialog, BrowserWindow } from 'electron'
+import { ipcMain, safeStorage, dialog, BrowserWindow, app as electronApp } from 'electron'
 import { getDb } from '../db'
 import { apps, platformCredentials, releaseTasks, taskLogs } from '../db/schema'
 import { eq, and, desc } from 'drizzle-orm'
@@ -7,6 +7,8 @@ import { startUploadTask, manualConfirmAuditPassed, cancelTask } from './task-ma
 import type { NewReleaseTask } from '../db/schema'
 import ApkReader from 'adbkit-apkreader'
 import axios from 'axios'
+import { copyFile, mkdir, rm } from 'fs/promises'
+import { extname, join } from 'path'
 
 function extractErrorMessage(err: unknown): string {
   if (axios.isAxiosError(err)) {
@@ -32,6 +34,29 @@ function verifySender(event: Electron.IpcMainInvokeEvent): void {
   }
 }
 
+function getManagedIconsDir(): string {
+  return join(electronApp.getPath('userData'), 'app-icons')
+}
+
+function isManagedIconPath(iconPath: string | null | undefined): boolean {
+  if (!iconPath) return false
+  return iconPath.startsWith(`${getManagedIconsDir()}/`) || iconPath.startsWith(`${getManagedIconsDir()}\\`)
+}
+
+async function persistAppIcon(sourcePath: string, appId: number): Promise<string> {
+  await mkdir(getManagedIconsDir(), { recursive: true })
+  const ext = extname(sourcePath).toLowerCase()
+  const safeExt = ext === '.png' || ext === '.jpg' || ext === '.jpeg' || ext === '.webp' ? ext : '.png'
+  const targetPath = join(getManagedIconsDir(), `app-${appId}-${Date.now()}${safeExt}`)
+  await copyFile(sourcePath, targetPath)
+  return targetPath
+}
+
+async function cleanupManagedIcon(iconPath: string | null | undefined): Promise<void> {
+  if (!isManagedIconPath(iconPath)) return
+  await rm(iconPath!, { force: true })
+}
+
 // ─── Apps ─────────────────────────────────────────────────────────────────────
 ipcMain.handle('apps:list', (event) => {
   verifySender(event)
@@ -39,16 +64,57 @@ ipcMain.handle('apps:list', (event) => {
   return db.select().from(apps).orderBy(desc(apps.createdAt)).all()
 })
 
-ipcMain.handle('apps:create', (event, payload: { name: string; bundleId: string; iconPath?: string }) => {
+ipcMain.handle('apps:create', async (event, payload: { name: string; bundleId: string; iconPath?: string }) => {
   verifySender(event)
   const db = getDb()
-  const result = db.insert(apps).values(payload).returning().get()
+  const created = db.insert(apps).values({ name: payload.name, bundleId: payload.bundleId }).returning().get()
+  if (!payload.iconPath) return created
+
+  const managedIconPath = await persistAppIcon(payload.iconPath, created.id)
+  const result = db
+    .update(apps)
+    .set({ iconPath: managedIconPath })
+    .where(eq(apps.id, created.id))
+    .returning()
+    .get()
   return result
 })
 
-ipcMain.handle('apps:delete', (event, appId: number) => {
+ipcMain.handle(
+  'apps:update',
+  async (
+    event,
+    payload: { id: number; name: string; bundleId: string; iconPath?: string | null }
+  ) => {
+    verifySender(event)
+    const db = getDb()
+    const existing = db.select().from(apps).where(eq(apps.id, payload.id)).get()
+    if (!existing) throw new Error('App 不存在')
+
+    let nextIconPath = existing.iconPath
+    if (payload.iconPath === null) {
+      await cleanupManagedIcon(existing.iconPath)
+      nextIconPath = null
+    } else if (payload.iconPath && payload.iconPath !== existing.iconPath) {
+      const managedIconPath = await persistAppIcon(payload.iconPath, payload.id)
+      await cleanupManagedIcon(existing.iconPath)
+      nextIconPath = managedIconPath
+    }
+
+    return db
+      .update(apps)
+      .set({ name: payload.name, bundleId: payload.bundleId, iconPath: nextIconPath })
+      .where(eq(apps.id, payload.id))
+      .returning()
+      .get()
+  }
+)
+
+ipcMain.handle('apps:delete', async (event, appId: number) => {
   verifySender(event)
   const db = getDb()
+  const existing = db.select().from(apps).where(eq(apps.id, appId)).get()
+  await cleanupManagedIcon(existing?.iconPath)
   db.delete(apps).where(eq(apps.id, appId)).run()
   return { ok: true }
 })

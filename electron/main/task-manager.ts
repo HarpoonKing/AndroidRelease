@@ -169,7 +169,12 @@ export async function startUploadTask(taskId: number): Promise<void> {
       try {
         auditTaskId = await svc.upload(
           task.apkPath,
-          { versionName: task.versionName, versionCode: task.versionCode, releaseNotes: task.releaseNotes ?? undefined },
+          {
+            versionName: task.versionName,
+            versionCode: task.versionCode,
+            releaseNotes: task.releaseNotes ?? undefined,
+            log: (message) => pushLog(taskId, 'info', message)
+          },
           creds
         )
       } finally {

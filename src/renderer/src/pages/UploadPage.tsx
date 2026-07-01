@@ -175,16 +175,20 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
                 }}
               >
                 {/* Platform header row */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div
+                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, cursor: selectedApp ? 'pointer' : 'default' }}
+                  onClick={() => selectedApp && togglePlatform(p.id)}
+                >
                   <label
                     style={{ cursor: 'pointer', margin: 0, color: 'var(--text)', fontWeight: checked ? 600 : 400, display: 'flex', alignItems: 'center', gap: 6 }}
-                    onClick={() => selectedApp && togglePlatform(p.id)}
+                    onClick={(e) => e.stopPropagation()}
                   >
                     <input
                       type="checkbox"
                       checked={checked}
                       onChange={() => selectedApp && togglePlatform(p.id)}
-                      style={{ width: 'auto', margin: 0 }}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ width: 18, height: 18, margin: 0, flexShrink: 0 }}
                     />
                     {p.displayName}
                   </label>
@@ -195,7 +199,10 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
                         ? <button
                             className="secondary"
                             style={{ fontSize: 11, padding: '2px 8px' }}
-                            onClick={() => setCredPlatform(p.id)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              setCredPlatform(p.id)
+                            }}
                           >配置凭证</button>
                         : null
                     }
@@ -208,7 +215,10 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
                     <button
                       className="secondary"
                       style={{ fontSize: 11, padding: '3px 10px', whiteSpace: 'nowrap' }}
-                      onClick={() => pickPlatformApk(p.id)}
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        pickPlatformApk(p.id)
+                      }}
                     >
                       {overrideApk ? '更换 APK' : '使用不同 APK'}
                     </button>
@@ -218,7 +228,10 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
                           <button
                             className="secondary"
                             style={{ fontSize: 11, padding: '2px 6px' }}
-                            onClick={() => clearPlatformApk(p.id)}
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              clearPlatformApk(p.id)
+                            }}
                           >✕</button>
                         </>
                       : effectiveApk

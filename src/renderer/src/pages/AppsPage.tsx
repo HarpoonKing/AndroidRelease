@@ -8,6 +8,7 @@ interface Props {
 export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
   const [apps, setApps] = useState<App[]>([])
   const [showForm, setShowForm] = useState(false)
+  const [editingApp, setEditingApp] = useState<App | null>(null)
   const [name, setName] = useState('')
   const [bundleId, setBundleId] = useState('')
   const [iconPath, setIconPath] = useState<string | null>(null)
@@ -29,13 +30,44 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
 
   useEffect(() => { loadApps() }, [])
 
-  async function handleCreate(): Promise<void> {
+  function resetForm(): void {
+    setName('')
+    setBundleId('')
+    setIconPath(null)
+    setCopyFromAppId('')
+    setEditingApp(null)
+    setShowForm(false)
+  }
+
+  function handleAddClick(): void {
+    setEditingApp(null)
+    setName('')
+    setBundleId('')
+    setIconPath(null)
+    setCopyFromAppId('')
+    setShowForm(true)
+  }
+
+  function handleEdit(app: App): void {
+    setEditingApp(app)
+    setName(app.name)
+    setBundleId(app.bundleId)
+    setIconPath(app.iconPath ?? null)
+    setCopyFromAppId('')
+    setShowForm(true)
+  }
+
+  async function handleSave(): Promise<void> {
     if (!name.trim() || !bundleId.trim()) return
-    const newApp = await window.api.apps.create({ name, bundleId, iconPath: iconPath ?? undefined })
-    if (copyFromAppId !== '') {
+    if (editingApp) {
+      await window.api.apps.update({ id: editingApp.id, name, bundleId, iconPath })
+    } else {
+      const newApp = await window.api.apps.create({ name, bundleId, iconPath: iconPath ?? undefined })
+      if (copyFromAppId !== '') {
       await window.api.credentials.copyFrom({ fromAppId: copyFromAppId, toAppId: newApp.id })
+      }
     }
-    setName(''); setBundleId(''); setIconPath(null); setCopyFromAppId(''); setShowForm(false)
+    resetForm()
     loadApps()
   }
 
@@ -54,12 +86,12 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
         <h2 style={{ fontSize: 18, fontWeight: 700 }}>App 管理</h2>
-        <button className="primary" onClick={() => setShowForm(true)}>+ 添加 App</button>
+        <button className="primary" onClick={handleAddClick}>+ 添加 App</button>
       </div>
 
       {showForm && (
         <div style={cardStyle}>
-          <h3 style={{ marginBottom: 14, fontSize: 14, fontWeight: 600 }}>添加新 App</h3>
+          <h3 style={{ marginBottom: 14, fontSize: 14, fontWeight: 600 }}>{editingApp ? '编辑 App' : '添加新 App'}</h3>
           <div className="field">
             <label>App 名称</label>
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="我的应用" />
@@ -72,10 +104,11 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
             <label>图标 (可选)</label>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button className="secondary" onClick={pickIcon}>选择图片</button>
+              {iconPath && <button className="secondary" onClick={() => setIconPath(null)}>移除图标</button>}
               {iconPath && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{iconPath.split('/').pop()}</span>}
             </div>
           </div>
-          {appsWithCredentials.length > 0 && (
+          {!editingApp && appsWithCredentials.length > 0 && (
             <div className="field">
               <label>复制凭证自 (可选)</label>
               <select
@@ -91,8 +124,8 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
             </div>
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-            <button className="primary" onClick={handleCreate}>创建</button>
-            <button className="secondary" onClick={() => setShowForm(false)}>取消</button>
+            <button className="primary" onClick={handleSave}>{editingApp ? '保存' : '创建'}</button>
+            <button className="secondary" onClick={resetForm}>取消</button>
           </div>
         </div>
       )}
@@ -112,6 +145,7 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
             </div>
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="primary" style={{ flex: 1 }} onClick={() => onSelectApp(app.id)}>上传发布</button>
+              <button className="secondary" onClick={() => handleEdit(app)}>编辑</button>
               <button className="danger" onClick={() => handleDelete(app.id)}>删除</button>
             </div>
           </div>
