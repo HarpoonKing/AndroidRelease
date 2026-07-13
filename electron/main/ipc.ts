@@ -7,7 +7,7 @@ import { startUploadTask, manualConfirmAuditPassed, cancelTask } from './task-ma
 import type { NewReleaseTask } from '../db/schema'
 import ApkReader from 'adbkit-apkreader'
 import axios from 'axios'
-import { copyFile, mkdir, rm } from 'fs/promises'
+import { access, copyFile, mkdir, rm } from 'fs/promises'
 import { extname, join } from 'path'
 
 function extractErrorMessage(err: unknown): string {
@@ -64,10 +64,21 @@ ipcMain.handle('apps:list', (event) => {
   return db.select().from(apps).orderBy(desc(apps.createdAt)).all()
 })
 
-ipcMain.handle('apps:create', async (event, payload: { name: string; bundleId: string; iconPath?: string }) => {
+ipcMain.handle(
+  'apps:create',
+  async (event, payload: { name: string; appAlias?: string; bundleId: string; iconPath?: string; apkRootDir?: string }) => {
   verifySender(event)
   const db = getDb()
-  const created = db.insert(apps).values({ name: payload.name, bundleId: payload.bundleId }).returning().get()
+  const created = db
+    .insert(apps)
+    .values({
+      name: payload.name,
+      appAlias: payload.appAlias ?? null,
+      bundleId: payload.bundleId,
+      apkRootDir: payload.apkRootDir ?? null
+    })
+    .returning()
+    .get()
   if (!payload.iconPath) return created
 
   const managedIconPath = await persistAppIcon(payload.iconPath, created.id)
@@ -78,13 +89,21 @@ ipcMain.handle('apps:create', async (event, payload: { name: string; bundleId: s
     .returning()
     .get()
   return result
-})
+}
+)
 
 ipcMain.handle(
   'apps:update',
   async (
     event,
-    payload: { id: number; name: string; bundleId: string; iconPath?: string | null }
+    payload: {
+      id: number
+      name: string
+      appAlias?: string | null
+      bundleId: string
+      iconPath?: string | null
+      apkRootDir?: string | null
+    }
   ) => {
     verifySender(event)
     const db = getDb()
@@ -103,7 +122,13 @@ ipcMain.handle(
 
     return db
       .update(apps)
-      .set({ name: payload.name, bundleId: payload.bundleId, iconPath: nextIconPath })
+      .set({
+        name: payload.name,
+        appAlias: payload.appAlias ?? null,
+        bundleId: payload.bundleId,
+        iconPath: nextIconPath,
+        apkRootDir: payload.apkRootDir ?? null
+      })
       .where(eq(apps.id, payload.id))
       .returning()
       .get()
@@ -389,6 +414,15 @@ ipcMain.handle('dialog:openImage', async (event) => {
   return result.canceled ? null : result.filePaths[0]
 })
 
+ipcMain.handle('dialog:openDirectory', async (event) => {
+  verifySender(event)
+  const result = await dialog.showOpenDialog({
+    title: '选择 APK 根目录',
+    properties: ['openDirectory']
+  })
+  return result.canceled ? null : result.filePaths[0]
+})
+
 // ─── APK metadata ─────────────────────────────────────────────────────────────
 ipcMain.handle('apk:readMeta', async (event, apkPath: string) => {
   verifySender(event)
@@ -399,3 +433,74 @@ ipcMain.handle('apk:readMeta', async (event, apkPath: string) => {
     versionCode: manifest.versionCode ?? 0
   }
 })
+
+ipcMain.handle(
+  'apk:autoMatchByRule',
+  async (
+    event,
+    payload: { appId: number; releaseVersion: string; platforms: string[] }
+  ) => {
+    verifySender(event)
+    const db = getDb()
+    const app = db.select().from(apps).where(eq(apps.id, payload.appId)).get()
+    if (!app) {
+      throw new Error('App 不存在')
+    }
+    const alias = (app.appAlias ?? '').trim()
+    if (!alias) {
+      throw new Error('当前 App 未设置别名，请先到 App 管理页配置')
+    }
+    const apkRootDir = (app.apkRootDir ?? '').trim()
+    if (!apkRootDir) {
+      throw new Error('当前 App 未设置 APK 根目录，请先到 App 管理页配置')
+    }
+    const releaseVersion = payload.releaseVersion.trim()
+    if (!releaseVersion) {
+      throw new Error('请先填写 App 版号')
+    }
+
+    // Version must be three numeric parts like 1.2.5, and filename uses 125.
+    const versionParts = releaseVersion.split('.')
+    if (versionParts.length !== 3 || versionParts.some((p) => !/^\d+$/.test(p))) {
+      throw new Error('App 版号格式需为三段数字，例如 1.2.5')
+    }
+    const compactVersion = versionParts.join('')
+
+    const ruleMap: Record<string, { seq: number; name: string }> = {
+      huawei: { seq: 1, name: 'huawei' },
+      yingyongbao: { seq: 2, name: 'tencent' },
+      vivo: { seq: 3, name: 'vivo' },
+      oppo: { seq: 4, name: 'oppo' },
+      xiaomi: { seq: 5, name: 'xiaomi' },
+      honor: { seq: 6, name: 'hihonor' }
+    }
+
+    const matched: Record<string, string> = {}
+    const missing: Array<{ platform: string; expectedFileName: string; expectedPath: string; reason?: string }> = []
+
+    for (const platform of payload.platforms) {
+      const rule = ruleMap[platform]
+      if (!rule) {
+        missing.push({
+          platform,
+          expectedFileName: '',
+          expectedPath: '',
+          reason: '该平台未配置自动匹配规则'
+        })
+        continue
+      }
+
+      const expectedFileName = `${alias}_${compactVersion}_${rule.seq}_${rule.name}_sign.apk`
+      const expectedPath = join(apkRootDir, releaseVersion, expectedFileName)
+
+      try {
+        await access(expectedPath)
+        matched[platform] = expectedPath
+      } catch {
+        missing.push({ platform, expectedFileName, expectedPath })
+      }
+    }
+
+    return { matched, missing }
+  }
+)

@@ -8,9 +8,16 @@ const api = {
   // Apps
   apps: {
     list: (): Promise<App[]> => ipcRenderer.invoke('apps:list'),
-    create: (payload: { name: string; bundleId: string; iconPath?: string }): Promise<App> =>
+    create: (payload: { name: string; appAlias?: string; bundleId: string; iconPath?: string; apkRootDir?: string }): Promise<App> =>
       ipcRenderer.invoke('apps:create', payload),
-    update: (payload: { id: number; name: string; bundleId: string; iconPath?: string | null }): Promise<App> =>
+    update: (payload: {
+      id: number
+      name: string
+      appAlias?: string | null
+      bundleId: string
+      iconPath?: string | null
+      apkRootDir?: string | null
+    }): Promise<App> =>
       ipcRenderer.invoke('apps:update', payload),
     delete: (appId: number): Promise<{ ok: boolean }> => ipcRenderer.invoke('apps:delete', appId)
   },
@@ -46,7 +53,15 @@ const api = {
   // APK metadata
   apk: {
     readMeta: (apkPath: string): Promise<{ versionName: string; versionCode: number }> =>
-      ipcRenderer.invoke('apk:readMeta', apkPath)
+      ipcRenderer.invoke('apk:readMeta', apkPath),
+    autoMatchByRule: (payload: {
+      appId: number
+      releaseVersion: string
+      platforms: string[]
+    }): Promise<{
+      matched: Record<string, string>
+      missing: Array<{ platform: string; expectedFileName: string; expectedPath: string; reason?: string }>
+    }> => ipcRenderer.invoke('apk:autoMatchByRule', payload)
   },
 
   // Platforms
@@ -81,7 +96,8 @@ const api = {
   // File dialogs
   dialog: {
     openApk: (): Promise<string | null> => ipcRenderer.invoke('dialog:openApk'),
-    openImage: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImage')
+    openImage: (): Promise<string | null> => ipcRenderer.invoke('dialog:openImage'),
+    openDirectory: (): Promise<string | null> => ipcRenderer.invoke('dialog:openDirectory')
   },
 
   // Events from main process

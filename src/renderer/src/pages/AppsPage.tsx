@@ -10,8 +10,10 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
   const [showForm, setShowForm] = useState(false)
   const [editingApp, setEditingApp] = useState<App | null>(null)
   const [name, setName] = useState('')
+  const [appAlias, setAppAlias] = useState('')
   const [bundleId, setBundleId] = useState('')
   const [iconPath, setIconPath] = useState<string | null>(null)
+  const [apkRootDir, setApkRootDir] = useState<string | null>(null)
   const [copyFromAppId, setCopyFromAppId] = useState<number | ''>('')
   const [appsWithCredentials, setAppsWithCredentials] = useState<App[]>([])
 
@@ -32,8 +34,10 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
 
   function resetForm(): void {
     setName('')
+    setAppAlias('')
     setBundleId('')
     setIconPath(null)
+    setApkRootDir(null)
     setCopyFromAppId('')
     setEditingApp(null)
     setShowForm(false)
@@ -42,8 +46,10 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
   function handleAddClick(): void {
     setEditingApp(null)
     setName('')
+    setAppAlias('')
     setBundleId('')
     setIconPath(null)
+    setApkRootDir(null)
     setCopyFromAppId('')
     setShowForm(true)
   }
@@ -51,8 +57,10 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
   function handleEdit(app: App): void {
     setEditingApp(app)
     setName(app.name)
+    setAppAlias(app.appAlias ?? '')
     setBundleId(app.bundleId)
     setIconPath(app.iconPath ?? null)
+    setApkRootDir(app.apkRootDir ?? null)
     setCopyFromAppId('')
     setShowForm(true)
   }
@@ -60,9 +68,22 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
   async function handleSave(): Promise<void> {
     if (!name.trim() || !bundleId.trim()) return
     if (editingApp) {
-      await window.api.apps.update({ id: editingApp.id, name, bundleId, iconPath })
+      await window.api.apps.update({
+        id: editingApp.id,
+        name,
+        appAlias: appAlias.trim() || null,
+        bundleId,
+        iconPath,
+        apkRootDir
+      })
     } else {
-      const newApp = await window.api.apps.create({ name, bundleId, iconPath: iconPath ?? undefined })
+      const newApp = await window.api.apps.create({
+        name,
+        appAlias: appAlias.trim() || undefined,
+        bundleId,
+        iconPath: iconPath ?? undefined,
+        apkRootDir: apkRootDir ?? undefined
+      })
       if (copyFromAppId !== '') {
       await window.api.credentials.copyFrom({ fromAppId: copyFromAppId, toAppId: newApp.id })
       }
@@ -82,6 +103,11 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
     if (path) setIconPath(path)
   }
 
+  async function pickApkRootDir(): Promise<void> {
+    const path = await window.api.dialog.openDirectory()
+    if (path) setApkRootDir(path)
+  }
+
   return (
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 }}>
@@ -97,6 +123,10 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
             <input value={name} onChange={(e) => setName(e.target.value)} placeholder="我的应用" />
           </div>
           <div className="field">
+            <label>App 别名 (可选)</label>
+            <input value={appAlias} onChange={(e) => setAppAlias(e.target.value)} placeholder="渠道投放名 / 内部简称" />
+          </div>
+          <div className="field">
             <label>包名 (Bundle ID)</label>
             <input value={bundleId} onChange={(e) => setBundleId(e.target.value)} placeholder="com.example.app" />
           </div>
@@ -106,6 +136,17 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
               <button className="secondary" onClick={pickIcon}>选择图片</button>
               {iconPath && <button className="secondary" onClick={() => setIconPath(null)}>移除图标</button>}
               {iconPath && <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{iconPath.split('/').pop()}</span>}
+            </div>
+          </div>
+          <div className="field">
+            <label>APK 根目录 (可选)</label>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button className="secondary" onClick={pickApkRootDir}>选择目录</button>
+              {apkRootDir && <button className="secondary" onClick={() => setApkRootDir(null)}>清空</button>}
+              {apkRootDir
+                ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{apkRootDir}</span>
+                : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>未设置</span>
+              }
             </div>
           </div>
           {!editingApp && appsWithCredentials.length > 0 && (
@@ -140,7 +181,11 @@ export default function AppsPage({ onSelectApp }: Props): React.ReactElement {
               }
               <div>
                 <div style={{ fontWeight: 600 }}>{app.name}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>别名: {app.appAlias || '未设置'}</div>
                 <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{app.bundleId}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                  APK 根目录: {app.apkRootDir || '未设置'}
+                </div>
               </div>
             </div>
             <div style={{ display: 'flex', gap: 8 }}>

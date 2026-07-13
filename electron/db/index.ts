@@ -10,7 +10,9 @@ const DDL = `
 CREATE TABLE IF NOT EXISTS apps (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   name TEXT NOT NULL,
+  app_alias TEXT,
   icon_path TEXT,
+  apk_root_dir TEXT,
   bundle_id TEXT NOT NULL,
   created_at INTEGER NOT NULL DEFAULT (unixepoch())
 );
@@ -59,6 +61,14 @@ export function initDb(): void {
 
   // Run DDL to ensure all tables exist (idempotent via IF NOT EXISTS)
   sqlite.exec(DDL)
+  // Lightweight compatibility migration for older local DBs.
+  const columns = sqlite.prepare("PRAGMA table_info('apps')").all() as Array<{ name: string }>
+  if (!columns.some((c) => c.name === 'app_alias')) {
+    sqlite.exec('ALTER TABLE apps ADD COLUMN app_alias TEXT')
+  }
+  if (!columns.some((c) => c.name === 'apk_root_dir')) {
+    sqlite.exec('ALTER TABLE apps ADD COLUMN apk_root_dir TEXT')
+  }
 
   _db = drizzle(sqlite, { schema })
 }

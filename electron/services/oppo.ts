@@ -365,7 +365,7 @@ export class OppoService implements PlatformService {
     const apk = await this.uploadApk(apkPath, token, creds.clientSecret)
     const apkUrl = JSON.stringify([{ url: apk.url, md5: apk.md5, cpu_code: 0 }])
 
-    // Step 3: 重传 icon 和截图（queryApp 返回的 CDN URL 不能直接用于 app/upd）
+    // Step 3: 处理 icon 和截图
     let safeIconUrl = ''
     if (creds.iconPath?.trim()) {
       const iconSrc = creds.iconPath.trim()
@@ -375,22 +375,14 @@ export class OppoService implements PlatformService {
         ? await this.uploadPhoto(iconSrc, token, creds.clientSecret, { width: OPPO_ICON_SIZE, height: OPPO_ICON_SIZE })
         : await this.uploadLocalPhoto(iconSrc, token, creds.clientSecret, { width: OPPO_ICON_SIZE, height: OPPO_ICON_SIZE })
     } else if (app.icon_url) {
-      logStage(`[oppo] re-uploading icon from: ${app.icon_url} as ${OPPO_ICON_SIZE}x${OPPO_ICON_SIZE} png`)
-      safeIconUrl = await this.uploadPhoto(app.icon_url, token, creds.clientSecret, {
-        width: OPPO_ICON_SIZE,
-        height: OPPO_ICON_SIZE
-      })
+      logStage(`[oppo] using existing icon_url from backend: ${app.icon_url}`)
+      safeIconUrl = app.icon_url
     }
 
     let safePicUrl = ''
     if (app.pic_url) {
-      logStage(`[oppo] re-uploading ${screenshotUrls.length} screenshots with ${OPPO_SCREENSHOT_WIDTH}x${OPPO_SCREENSHOT_HEIGHT}`)
-      const newUrls: string[] = []
-      for (const rawUrl of screenshotUrls) {
-        const url = await this.uploadPhoto(rawUrl, token, creds.clientSecret, { width: OPPO_SCREENSHOT_WIDTH, height: OPPO_SCREENSHOT_HEIGHT })
-        newUrls.push(url)
-      }
-      safePicUrl = newUrls.join(',')
+      logStage(`[oppo] using existing ${screenshotUrls.length} screenshots from backend`)
+      safePicUrl = app.pic_url
     }
     logStage(`[oppo] icon_url: ${safeIconUrl}`)
     logStage(`[oppo] pic_url: ${safePicUrl}`)

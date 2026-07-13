@@ -18,6 +18,7 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
   const [defaultApkPath, setDefaultApkPath] = useState<string | null>(null)
   // platformApks: 每个平台独立覆盖的 APK（未设置则使用默认）
   const [platformApks, setPlatformApks] = useState<Record<string, string>>({})
+  const [appReleaseVersion, setAppReleaseVersion] = useState('')
   const [versionName, setVersionName] = useState('')
   const [versionCode, setVersionCode] = useState('')
   const [versionAutoFilled, setVersionAutoFilled] = useState(false)
@@ -32,9 +33,16 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
   }, [])
 
   useEffect(() => {
-    if (selectedApp) {
-      window.api.credentials.getConfiguredPlatforms(selectedApp).then(setConfiguredPlatforms)
+    if (!selectedApp) {
+      setConfiguredPlatforms([])
+      setSelectedPlatforms([])
+      return
     }
+
+    window.api.credentials.getConfiguredPlatforms(selectedApp).then((configured: string[]) => {
+      setConfiguredPlatforms(configured)
+      setSelectedPlatforms(configured)
+    })
   }, [selectedApp])
 
   async function pickDefaultApk(): Promise<void> {
@@ -72,6 +80,48 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
 
   function getApkForPlatform(platformId: string): string | null {
     return platformApks[platformId] ?? defaultApkPath
+  }
+
+  async function autoMatchPlatformApks(): Promise<void> {
+    if (!selectedApp) {
+      alert('请先选择 App')
+      return
+    }
+    if (!appReleaseVersion.trim()) {
+      alert('请先填写 App 版号')
+      return
+    }
+    if (selectedPlatforms.length === 0) {
+      alert('请至少选择一个目标平台')
+      return
+    }
+
+    try {
+      const result = await window.api.apk.autoMatchByRule({
+        appId: selectedApp,
+        releaseVersion: appReleaseVersion,
+        platforms: selectedPlatforms
+      })
+
+      if (Object.keys(result.matched).length > 0) {
+        setPlatformApks((prev) => ({ ...prev, ...result.matched }))
+      }
+
+      if (result.missing.length === 0) {
+        return
+      }
+
+      const missingText = result.missing
+        .map((m: { platform: string; expectedFileName: string; expectedPath: string; reason?: string }) => {
+          const displayName = platforms.find((p) => p.id === m.platform)?.displayName || m.platform
+          if (m.reason) return `${displayName}: ${m.reason}`
+          return `${displayName}: ${m.expectedFileName}`
+        })
+        .join('\n')
+      alert(`部分平台未匹配到 APK：\n${missingText}`)
+    } catch (err: unknown) {
+      alert(`自动匹配失败: ${err instanceof Error ? err.message : String(err)}`)
+    }
   }
 
   async function handleSubmit(): Promise<void> {
@@ -151,6 +201,22 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
             ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{defaultApkPath.split('/').pop()}</span>
             : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>未选择（需为各平台单独指定）</span>
           }
+        </div>
+      </div>
+
+      <div className="field">
+        <label>App 版号（用于自动匹配文件名）</label>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            value={appReleaseVersion}
+            onChange={(e) => setAppReleaseVersion(e.target.value)}
+            placeholder="例如 1.2.5"
+            style={{ flex: 1 }}
+          />
+          <button className="secondary" onClick={autoMatchPlatformApks}>按规则自动匹配 APK</button>
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
+          规则：输入版号如 1.2.5，会转为 125；在 APK根目录/1.2.5/ 下匹配别名_125_平台序号_平台名称_sign.apk
         </div>
       </div>
 
@@ -312,7 +378,10 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
           onClose={() => setCredPlatform(null)}
           onSaved={() => {
             setCredPlatform(null)
-            window.api.credentials.getConfiguredPlatforms(selectedApp).then(setConfiguredPlatforms)
+            window.api.credentials.getConfiguredPlatforms(selectedApp).then((configured: string[]) => {
+              setConfiguredPlatforms(configured)
+              setSelectedPlatforms((prev) => Array.from(new Set([...prev, ...configured])))
+            })
           }}
         />
       )}

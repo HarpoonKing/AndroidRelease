@@ -4,7 +4,9 @@ import { sql } from 'drizzle-orm'
 export const apps = sqliteTable('apps', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
+  appAlias: text('app_alias'),
   iconPath: text('icon_path'),
+  apkRootDir: text('apk_root_dir'),
   bundleId: text('bundle_id').notNull(),
   createdAt: integer('created_at', { mode: 'timestamp' })
     .notNull()
