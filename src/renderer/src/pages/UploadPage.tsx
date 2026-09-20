@@ -14,9 +14,9 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
   const [platforms, setPlatforms] = useState<Platform[]>([])
   const [configuredPlatforms, setConfiguredPlatforms] = useState<string[]>([])
   const [selectedPlatforms, setSelectedPlatforms] = useState<string[]>([])
-  // defaultApkPath: 所有平台共用的默认 APK
+  // defaultApkPath: 所有平台共用的默认安装包（APK/AAB）
   const [defaultApkPath, setDefaultApkPath] = useState<string | null>(null)
-  // platformApks: 每个平台独立覆盖的 APK（未设置则使用默认）
+  // platformApks: 每个平台独立覆盖的安装包（未设置则使用默认）
   const [platformApks, setPlatformApks] = useState<Record<string, string>>({})
   const [appReleaseVersion, setAppReleaseVersion] = useState('')
   const [versionName, setVersionName] = useState('')
@@ -45,10 +45,7 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
     })
   }, [selectedApp])
 
-  async function pickDefaultApk(): Promise<void> {
-    const path = await window.api.dialog.openApk()
-    if (!path) return
-    setDefaultApkPath(path)
+  async function fillVersionFromApk(path: string): Promise<void> {
     try {
       const meta = await window.api.apk.readMeta(path)
       setVersionName(meta.versionName)
@@ -57,6 +54,13 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
     } catch {
       // APK 解析失败不影响流程，用户可手动填写
     }
+  }
+
+  async function pickDefaultApk(): Promise<void> {
+    const path = await window.api.dialog.openApk()
+    if (!path) return
+    setDefaultApkPath(path)
+    await fillVersionFromApk(path)
   }
 
   async function pickPlatformApk(platformId: string): Promise<void> {
@@ -105,6 +109,10 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
 
       if (Object.keys(result.matched).length > 0) {
         setPlatformApks((prev) => ({ ...prev, ...result.matched }))
+        if (!defaultApkPath && result.matched.huawei) {
+          setDefaultApkPath(result.matched.huawei)
+          await fillVersionFromApk(result.matched.huawei)
+        }
       }
 
       if (result.missing.length === 0) {
@@ -194,9 +202,9 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
 
       {/* Default APK */}
       <div className="field">
-        <label>默认 APK（所有平台共用，可被各平台单独覆盖）</label>
+        <label>默认安装包（APK/AAB，所有平台共用，可被各平台单独覆盖）</label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <button className="secondary" onClick={pickDefaultApk}>选择 APK</button>
+          <button className="secondary" onClick={pickDefaultApk}>选择文件</button>
           {defaultApkPath
             ? <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{defaultApkPath.split('/').pop()}</span>
             : <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>未选择（需为各平台单独指定）</span>
@@ -286,7 +294,7 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
                         pickPlatformApk(p.id)
                       }}
                     >
-                      {overrideApk ? '更换 APK' : '使用不同 APK'}
+                      {overrideApk ? '更换文件' : '使用不同文件'}
                     </button>
                     {overrideApk
                       ? <>

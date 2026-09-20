@@ -61,6 +61,14 @@ export function initDb(): void {
 
   // Run DDL to ensure all tables exist (idempotent via IF NOT EXISTS)
   sqlite.exec(DDL)
+  sqlite.exec(`
+    UPDATE release_tasks
+    SET status = 'upload_failed', completed_at = unixepoch()
+    WHERE status = 'uploading';
+    UPDATE release_tasks
+    SET status = 'publish_failed', completed_at = unixepoch()
+    WHERE status = 'publishing';
+  `)
   // Lightweight compatibility migration for older local DBs.
   const columns = sqlite.prepare("PRAGMA table_info('apps')").all() as Array<{ name: string }>
   if (!columns.some((c) => c.name === 'app_alias')) {

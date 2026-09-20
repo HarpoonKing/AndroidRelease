@@ -1,16 +1,18 @@
 import type { PlatformService } from './base'
 import { HuaweiService } from './huawei'
 import { HonorService } from './honor'
+import { GooglePlayService } from './googleplay'
 import { XiaomiService } from './xiaomi'
 import { OppoService } from './oppo'
 import { VivoService } from './vivo'
 import { YingyongbaoService } from './yingyongbao'
 
-export type PlatformId = 'huawei' | 'honor' | 'xiaomi' | 'oppo' | 'vivo' | 'yingyongbao'
+export type PlatformId = 'huawei' | 'honor' | 'googleplay' | 'xiaomi' | 'oppo' | 'vivo' | 'yingyongbao'
 
 const registry: Record<PlatformId, PlatformService> = {
   huawei: new HuaweiService(),
   honor: new HonorService(),
+  googleplay: new GooglePlayService(),
   xiaomi: new XiaomiService(),
   oppo: new OppoService(),
   vivo: new VivoService(),

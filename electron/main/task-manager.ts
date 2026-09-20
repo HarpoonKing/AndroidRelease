@@ -144,6 +144,11 @@ export async function startUploadTask(taskId: number): Promise<void> {
   if (task.platform === 'yingyongbao' && app?.bundleId && !creds.pkgName) {
     creds.pkgName = app.bundleId
   }
+  if (task.platform === 'xiaomi' && app) {
+    creds.packageName ||= app.bundleId
+    creds.appName = app.name
+    creds.iconPath = app.iconPath ?? ''
+  }
 
   const svc = getService(task.platform)
   pushLog(taskId, 'info', `开始上传 APK 到 ${svc.displayName}`)
@@ -223,6 +228,9 @@ export async function pollAuditStatus(taskId: number): Promise<void> {
   if (!creds) return
   if (task.platform === 'yingyongbao' && app?.bundleId && !creds.pkgName) {
     creds.pkgName = app.bundleId
+  }
+  if (task.platform === 'xiaomi' && app) {
+    creds.packageName ||= app.bundleId
   }
 
   const svc = getService(task.platform)

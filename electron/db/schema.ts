@@ -18,7 +18,7 @@ export const platformCredentials = sqliteTable('platform_credentials', {
   appId: integer('app_id')
     .notNull()
     .references(() => apps.id, { onDelete: 'cascade' }),
-  platform: text('platform').notNull(), // huawei | honor | xiaomi | oppo | vivo | yingyongbao
+  platform: text('platform').notNull(), // huawei | honor | googleplay | xiaomi | oppo | vivo | yingyongbao
   encryptedBlob: text('encrypted_blob').notNull(), // Buffer as base64
   updatedAt: integer('updated_at', { mode: 'timestamp' })
     .notNull()

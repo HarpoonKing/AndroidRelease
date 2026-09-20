@@ -397,8 +397,8 @@ ipcMain.handle('tasks:delete', (event, taskId: number) => {
 ipcMain.handle('dialog:openApk', async (event) => {
   verifySender(event)
   const result = await dialog.showOpenDialog({
-    title: '选择 APK 文件',
-    filters: [{ name: 'Android Package', extensions: ['apk'] }],
+    title: '选择 Android 安装包文件 (APK/AAB)',
+    filters: [{ name: 'Android Package', extensions: ['apk', 'aab'] }],
     properties: ['openFile']
   })
   return result.canceled ? null : result.filePaths[0]
