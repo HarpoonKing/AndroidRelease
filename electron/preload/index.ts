@@ -58,6 +58,7 @@ const api = {
       appId: number
       releaseVersion: string
       platforms: string[]
+      apkRootDir?: string
     }): Promise<{
       matched: Record<string, string>
       missing: Array<{ platform: string; expectedFileName: string; expectedPath: string; reason?: string }>

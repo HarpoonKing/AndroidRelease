@@ -72,8 +72,8 @@ npm run build:unpack
 
 1. 选择 App
 2. 选择默认 APK（可自动填充版本号）
-3. 勾选目标平台
-4. 如有需要，为单个平台单独选择不同 APK
+3. 填写 APK 根路径和版号，点击「按规则自动配置 APK」（根路径/别名_紧凑版号_序号_平台_sign.apk，文件名规则不变）
+4. 勾选目标平台；如有需要，为单个平台单独选择不同 APK
 5. 填写更新说明
 6. 可选：设置“定时上架时间”
 7. 点击“开始上传”
@@ -120,8 +120,8 @@ npm run build:unpack
 - `clientId`
 - `clientSecret`
 - `packageName`
-- `iconUrl`（可选，覆盖后台图标；不填则自动从后台下载后重传到 OPPO CDN）
-- `picUrl`（可选，覆盖后台截图，逗号分隔；不填则自动从后台下载后重传到 OPPO CDN）
+- `iconPath`（可选，本地路径或图片链接；不填则使用后台图标）
+- `copyrightPath`（可选，软件版权证明。本地 JPG/PNG/PDF 或 https 链接，多个用英文逗号分隔。不填则下载后台证明并重新上传到 OPPO；后台为空时发版会报 911001）
 
 ### Vivo 应用商店
 

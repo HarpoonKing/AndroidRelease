@@ -438,7 +438,7 @@ ipcMain.handle(
   'apk:autoMatchByRule',
   async (
     event,
-    payload: { appId: number; releaseVersion: string; platforms: string[] }
+    payload: { appId: number; releaseVersion: string; platforms: string[]; apkRootDir?: string }
   ) => {
     verifySender(event)
     const db = getDb()
@@ -450,9 +450,9 @@ ipcMain.handle(
     if (!alias) {
       throw new Error('当前 App 未设置别名，请先到 App 管理页配置')
     }
-    const apkRootDir = (app.apkRootDir ?? '').trim()
+    const apkRootDir = (payload.apkRootDir ?? app.apkRootDir ?? '').trim()
     if (!apkRootDir) {
-      throw new Error('当前 App 未设置 APK 根目录，请先到 App 管理页配置')
+      throw new Error('请先填写 APK 根路径')
     }
     const releaseVersion = payload.releaseVersion.trim()
     if (!releaseVersion) {
@@ -491,7 +491,7 @@ ipcMain.handle(
       }
 
       const expectedFileName = `${alias}_${compactVersion}_${rule.seq}_${rule.name}_sign.apk`
-      const expectedPath = join(apkRootDir, releaseVersion, expectedFileName)
+      const expectedPath = join(apkRootDir, expectedFileName)
 
       try {
         await access(expectedPath)

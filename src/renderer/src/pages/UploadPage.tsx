@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import type { App } from '../../../../electron/db/schema'
 import type { Platform } from '../../../../electron/preload'
 import CredentialModal from '../components/CredentialModal'
@@ -18,6 +18,7 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
   const [defaultApkPath, setDefaultApkPath] = useState<string | null>(null)
   // platformApks: 每个平台独立覆盖的安装包（未设置则使用默认）
   const [platformApks, setPlatformApks] = useState<Record<string, string>>({})
+  const [apkRootDir, setApkRootDir] = useState('')
   const [appReleaseVersion, setAppReleaseVersion] = useState('')
   const [versionName, setVersionName] = useState('')
   const [versionCode, setVersionCode] = useState('')
@@ -26,6 +27,7 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
   const [scheduledAt, setScheduledAt] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const [credPlatform, setCredPlatform] = useState<string | null>(null)
+  const rootSyncedAppId = useRef<number | null>(null)
 
   useEffect(() => {
     window.api.apps.list().then(setApps)
@@ -36,6 +38,8 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
     if (!selectedApp) {
       setConfiguredPlatforms([])
       setSelectedPlatforms([])
+      setApkRootDir('')
+      rootSyncedAppId.current = null
       return
     }
 
@@ -44,6 +48,32 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
       setSelectedPlatforms(configured)
     })
   }, [selectedApp])
+
+  useEffect(() => {
+    if (!selectedApp) return
+    if (rootSyncedAppId.current === selectedApp) return
+    const app = apps.find((item) => item.id === selectedApp)
+    if (!app) return
+    setApkRootDir(app.apkRootDir ?? '')
+    rootSyncedAppId.current = selectedApp
+  }, [selectedApp, apps])
+
+  async function persistApkRootDir(dir: string): Promise<void> {
+    if (!selectedApp) return
+    const app = apps.find((item) => item.id === selectedApp)
+    if (!app) return
+    const next = dir.trim()
+    if ((app.apkRootDir ?? '') === next) return
+    const updated = await window.api.apps.update({
+      id: app.id,
+      name: app.name,
+      appAlias: app.appAlias,
+      bundleId: app.bundleId,
+      iconPath: app.iconPath,
+      apkRootDir: next || null
+    })
+    setApps((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+  }
 
   async function fillVersionFromApk(path: string): Promise<void> {
     try {
@@ -86,9 +116,21 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
     return platformApks[platformId] ?? defaultApkPath
   }
 
+  async function pickApkRootDir(): Promise<void> {
+    const path = await window.api.dialog.openDirectory()
+    if (!path) return
+    setApkRootDir(path)
+    await persistApkRootDir(path)
+  }
+
   async function autoMatchPlatformApks(): Promise<void> {
     if (!selectedApp) {
       alert('请先选择 App')
+      return
+    }
+    const root = apkRootDir.trim()
+    if (!root) {
+      alert('请先填写 APK 根路径')
       return
     }
     if (!appReleaseVersion.trim()) {
@@ -101,10 +143,12 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
     }
 
     try {
+      await persistApkRootDir(root)
       const result = await window.api.apk.autoMatchByRule({
         appId: selectedApp,
         releaseVersion: appReleaseVersion,
-        platforms: selectedPlatforms
+        platforms: selectedPlatforms,
+        apkRootDir: root
       })
 
       if (Object.keys(result.matched).length > 0) {
@@ -123,7 +167,7 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
         .map((m: { platform: string; expectedFileName: string; expectedPath: string; reason?: string }) => {
           const displayName = platforms.find((p) => p.id === m.platform)?.displayName || m.platform
           if (m.reason) return `${displayName}: ${m.reason}`
-          return `${displayName}: ${m.expectedFileName}`
+          return `${displayName}: ${m.expectedPath || m.expectedFileName}`
         })
         .join('\n')
       alert(`部分平台未匹配到 APK：\n${missingText}`)
@@ -213,6 +257,20 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
       </div>
 
       <div className="field">
+        <label>APK 根路径</label>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input
+            value={apkRootDir}
+            onChange={(e) => setApkRootDir(e.target.value)}
+            onBlur={() => { void persistApkRootDir(apkRootDir) }}
+            placeholder="例如 /Users/ef/apks"
+            style={{ flex: 1 }}
+          />
+          <button className="secondary" onClick={pickApkRootDir}>选择目录</button>
+        </div>
+      </div>
+
+      <div className="field">
         <label>App 版号（用于自动匹配文件名）</label>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
           <input
@@ -221,10 +279,10 @@ export default function UploadPage({ appId, onBack }: Props): React.ReactElement
             placeholder="例如 1.2.5"
             style={{ flex: 1 }}
           />
-          <button className="secondary" onClick={autoMatchPlatformApks}>按规则自动匹配 APK</button>
+          <button className="secondary" onClick={autoMatchPlatformApks}>按规则自动配置 APK</button>
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 4 }}>
-          规则：输入版号如 1.2.5，会转为 125；在 APK根目录/1.2.5/ 下匹配别名_125_平台序号_平台名称_sign.apk
+          文件名不变：版号 1.2.5 转为 125，在填写的根路径下匹配 别名_125_序号_平台_sign.apk（华为 1_huawei、应用宝 2_tencent、vivo 3_vivo、OPPO 4_oppo、小米 5_xiaomi、荣耀 6_hihonor）
         </div>
       </div>
 

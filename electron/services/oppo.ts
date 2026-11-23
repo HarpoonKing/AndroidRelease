@@ -51,6 +51,7 @@ interface OppoAppData {
   icon_url?: string
   pic_url?: string
   copyright_url?: string
+  electronic_cert_url?: string
   business_username?: string
   business_email?: string
   business_mobile?: string
@@ -193,6 +194,13 @@ export class OppoService implements PlatformService {
         type: 'text',
         required: false,
         placeholder: '本地文件路径或 https:// 图片链接，留空则使用后台图标'
+      },
+      {
+        key: 'copyrightPath',
+        label: '软件版权证明（可选）',
+        type: 'text',
+        required: false,
+        placeholder: '本地 JPG/PNG/PDF 或 https 链接，多个用英文逗号分隔；留空则下载后台证明并重新上传'
       }
     ]
   }
@@ -341,7 +349,143 @@ export class OppoService implements PlatformService {
     return uploadRes.data.data.url
   }
 
+  /** 上传图片或 PDF 资质，返回 OPPO 发版接口可接受的 URL */
+  private async uploadQualification(
+    source: string,
+    token: string,
+    clientSecret: string
+  ): Promise<{ url: string; kind: 'image' | 'pdf' }> {
+    const remote = /^https?:\/\//i.test(source) || source.startsWith('//')
+    const fetchUrl = source.startsWith('//') ? `https:${source}` : source
+    let rawBuffer: Buffer
+    try {
+      if (remote) {
+        const dl = await axios.get<ArrayBuffer>(fetchUrl, {
+          responseType: 'arraybuffer',
+          timeout: 60_000,
+          maxContentLength: 25 * 1024 * 1024,
+          maxBodyLength: 25 * 1024 * 1024
+        })
+        rawBuffer = Buffer.from(dl.data)
+      } else {
+        rawBuffer = await readFile(source)
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      throw new PlatformApiError('oppo', 'copyright_download_failed', `无法读取软件版权证明: ${source}; ${reason}`)
+    }
 
+    const isPdf =
+      rawBuffer.subarray(0, 5).toString('latin1') === '%PDF-' || /\.pdf(?:$|\?)/i.test(source)
+    const isJpeg = rawBuffer[0] === 0xff && rawBuffer[1] === 0xd8
+    const isPng =
+      rawBuffer.length >= 8 &&
+      rawBuffer[0] === 0x89 &&
+      rawBuffer[1] === 0x50 &&
+      rawBuffer[2] === 0x4e &&
+      rawBuffer[3] === 0x47
+
+    let file = rawBuffer
+    let filename = 'copyright.png'
+    let contentType = 'image/png'
+    let type: 'photo' | 'resource' = 'photo'
+    let kind: 'image' | 'pdf' = 'image'
+    if (isPdf) {
+      filename = 'copyright.pdf'
+      contentType = 'application/pdf'
+      type = 'resource'
+      kind = 'pdf'
+    } else if (isJpeg) {
+      filename = 'copyright.jpg'
+      contentType = 'image/jpeg'
+    } else if (!isPng) {
+      file = await convertImageToPng(rawBuffer, source)
+    }
+
+    const urlRes = await axios.get<{
+      errno: number
+      data?: { upload_url?: string; sign?: string }
+    }>(`${OPPO_DOMAIN}/resource/v1/upload/get-upload-url`, {
+      params: signParams({}, token, clientSecret),
+      timeout: META_TIMEOUT_MS
+    })
+    if (urlRes.data?.errno !== 0 || !urlRes.data.data?.upload_url || !urlRes.data.data.sign) {
+      throw new PlatformApiError('oppo', urlRes.data?.errno, parseOppoError(urlRes.data))
+    }
+
+    const form = new FormData()
+    form.append('sign', urlRes.data.data.sign)
+    form.append('type', type)
+    form.append('file', file, { filename, contentType })
+
+    const uploadRes = await axios.post<{
+      errno: number
+      data?: { url?: string }
+    }>(urlRes.data.data.upload_url, form, {
+      headers: form.getHeaders(),
+      timeout: UPLOAD_TIMEOUT_MS,
+      maxBodyLength: Infinity,
+      maxContentLength: Infinity
+    })
+    if (uploadRes.data?.errno !== 0 || !uploadRes.data.data?.url) {
+      throw new PlatformApiError('oppo', uploadRes.data?.errno, parseOppoError(uploadRes.data))
+    }
+    return { url: uploadRes.data.data.url, kind }
+  }
+
+  /**
+   * app/upd 不接受查询接口返回的旧 CDN 地址，且 copyright_url 常带尾部空段（如 "http://xx.jpg,,"）。
+   * 空段会被 OPPO 判成 911001。这里重新上传后再提交。
+   */
+  private async resolveCopyright(
+    app: OppoAppData,
+    creds: Record<string, string>,
+    token: string,
+    clientSecret: string,
+    logStage: (message: string) => void
+  ): Promise<{ copyrightUrl: string; electronicCertUrl: string }> {
+    const splitCsv = (value: string | undefined): string[] =>
+      (value ?? '')
+        .split(',')
+        .map((part) => part.trim())
+        .filter(Boolean)
+
+    const override = splitCsv(creds.copyrightPath)
+    const paperSources = override.length > 0 ? override : splitCsv(app.copyright_url)
+    const electronicSources = override.length > 0 ? [] : splitCsv(app.electronic_cert_url)
+    logStage(`[oppo] source copyright_url: ${JSON.stringify(app.copyright_url ?? '')}`)
+    logStage(`[oppo] source electronic_cert_url: ${JSON.stringify(app.electronic_cert_url ?? '')}`)
+    if (override.length > 0) {
+      logStage(`[oppo] using copyrightPath override (${override.length} file(s))`)
+    }
+
+    const paper: string[] = []
+    const electronic: string[] = []
+    for (const source of paperSources) {
+      logStage(`[oppo] re-uploading copyright proof: ${source}`)
+      const uploaded = await this.uploadQualification(source, token, clientSecret)
+      if (uploaded.kind === 'pdf') electronic.push(uploaded.url)
+      else paper.push(uploaded.url)
+    }
+    for (const source of electronicSources) {
+      logStage(`[oppo] re-uploading electronic copyright cert: ${source}`)
+      const uploaded = await this.uploadQualification(source, token, clientSecret)
+      electronic.push(uploaded.url)
+      if (uploaded.kind === 'image') paper.push(uploaded.url)
+    }
+
+    const electronicCertUrl = electronic.join(',')
+    // 纸质扫描件优先；只有 PDF 电子证书时也写入 copyright_url，避免 911001
+    const copyrightUrl = paper.join(',') || electronicCertUrl
+    if (!copyrightUrl) {
+      throw new PlatformApiError(
+        'oppo',
+        911001,
+        `软件版权证明不能为空（后台 copyright_url=${JSON.stringify(app.copyright_url ?? '')}）。请在 OPPO 凭证填写 copyrightPath：本地 JPG/PNG/PDF 路径或 https 链接`
+      )
+    }
+    return { copyrightUrl, electronicCertUrl }
+  }
 
   async upload(apkPath: string, meta: UploadMeta, creds: Record<string, string>): Promise<string> {
     const token = await getAccessToken(creds.clientId, creds.clientSecret)
@@ -360,6 +504,13 @@ export class OppoService implements PlatformService {
       .filter(Boolean)
     logStage(`[oppo] source icon_url: ${app.icon_url ?? ''}`)
     logStage(`[oppo] source screenshot_urls: ${JSON.stringify(screenshotUrls)}`)
+
+    // 先处理版权证明，避免 APK 传完才因 911001 失败
+    const copyright = await this.resolveCopyright(app, creds, token, creds.clientSecret, logStage)
+    logStage(`[oppo] copyright_url: ${copyright.copyrightUrl}`)
+    if (copyright.electronicCertUrl) {
+      logStage(`[oppo] electronic_cert_url: ${copyright.electronicCertUrl}`)
+    }
 
     // Step 2: 上传 APK
     const apk = await this.uploadApk(apkPath, token, creds.clientSecret)
@@ -402,7 +553,6 @@ export class OppoService implements PlatformService {
       privacy_source_url: app.privacy_source_url ?? '',
       online_type: '1',
       test_desc: safeTestDesc,
-      copyright_url: app.copyright_url ?? '',
       business_username: app.business_username ?? '',
       business_email: app.business_email ?? '',
       business_mobile: app.business_mobile ?? '',
@@ -411,7 +561,11 @@ export class OppoService implements PlatformService {
       adaptive_type: '2',
       customer_contact: app.customer_contact ?? '',
       icon_url: safeIconUrl,
-      pic_url: safePicUrl
+      pic_url: safePicUrl,
+      copyright_url: copyright.copyrightUrl
+    }
+    if (copyright.electronicCertUrl) {
+      values.electronic_cert_url = copyright.electronicCertUrl
     }
 
     const res = await axios.post<{ errno: number }>(
